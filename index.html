@@ -2,7 +2,7 @@
 <html lang="pt-BR"><head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Widget – Tabela de Produtos</title>
+  <title>Widget – Tabela de Produtos em PNG</title>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -147,15 +147,6 @@
     td.col-ref  { color: #000000; }
     td.col-comp { font-family: 'JetBrains Mono', monospace; color: #000000; }
 
-    /* ── Barra de confirmação ── */
-    .action-row {
-      display: none; align-items: center; justify-content: space-between;
-      gap: 10px; margin-top: 12px; flex-wrap: wrap;
-      background: var(--accent-bg); border: 1px solid var(--accent-dim);
-      border-radius: 8px; padding: 10px 14px;
-    }
-    .action-row.on { display: flex; }
-
     /* ── Mensagem de sucesso ── */
     .sent-box {
       display: none; align-items: center; gap: 8px; margin-top: 12px;
@@ -178,10 +169,6 @@
   <div class="dz-sub">ou clique para selecionar &nbsp;<code>.xlsx</code>&nbsp;<code>.xls</code>&nbsp;<code>.csv</code></div>
 </div>
 
-<details open style="margin-top:12px;padding:10px;border:1px solid #c8cdd8;background:white">
-<summary>Widget diagnostics — test version 4 — HTML metadata</summary>
-<pre id="diagnostics" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin-top:8px" aria-live="polite"></pre>
-</details>
 <div class="status" id="status" role="status" aria-live="polite"></div>
 
 <div class="meta-bar" id="metaBar">
@@ -204,25 +191,11 @@
   </div>
 </div>
 
-
-
 <div class="sent-box" id="sentBox">
   ✔ Dados enviados ao campo do formulário. Envie o formulário para salvar a resposta.
 </div>
 
 <script>
-function diagnostic(message) {
-  var output = document.getElementById('diagnostics');
-  output.textContent += new Date().toLocaleTimeString() + ' ' + message + '\n';
-}
-diagnostic('Script running. SDK loaded: ' + (typeof JFCustomWidget !== 'undefined'));
-window.addEventListener('error', function (event) {
-  diagnostic('JavaScript error: ' + event.message);
-});
-setTimeout(function () {
-  if (!widgetReady) diagnostic('No ready event received. Check that this URL is configured as a Jotform custom iframe widget.');
-}, 8000);
-
 // Set false if an empty answer should be accepted.
 var REQUIRE_IMPORT = true;
 var grouped = [];
@@ -235,27 +208,33 @@ function resizeWidget() {
   if (widgetReady && typeof JFCustomWidget.requestFrameResize === 'function') {
     try {
       JFCustomWidget.requestFrameResize({ height: document.body.scrollHeight + 32 });
-    } catch (error) { diagnostic('Resize failed: ' + error.message); }
+    } catch (error) { /* Resizing is optional; keep data handling available. */ }
   }
 }
 
 function sendCurrentTable() {
-  currentValue = grouped.length ? buildWidgetValue() : '';
+  var success = true;
+  try {
+    currentValue = grouped.length ? buildWidgetValue() : '';
+  } catch (error) {
+    currentValue = '';
+    success = false;
+    if (statusTimer) clearTimeout(statusTimer);
+    setStatus('err', 'Erro ao gerar PNG: ' + error.message);
+  }
   if (widgetReady) {
     var valid = !importing && (!REQUIRE_IMPORT || currentValue !== '');
-    diagnostic('Calling sendData: valid=' + valid + '; characters=' + currentValue.length + '.');
-    try {
-      JFCustomWidget.sendData({ value: currentValue, valid: valid });
-      diagnostic('sendData returned (delivery is not acknowledged).');
-    } catch (error) { diagnostic('sendData failed: ' + error.message); }
+
+    JFCustomWidget.sendData({ value: currentValue, valid: valid });
   }
   resizeWidget();
+  return success;
 }
 
 if (typeof JFCustomWidget !== 'undefined') {
   JFCustomWidget.subscribe('ready', function (data) {
     widgetReady = true;
-    diagnostic('ready event received from Jotform.');
+
     // Preserve an existing answer when opening an edited submission.
     if (!importVersion && !grouped.length && data && typeof data.value === 'string') {
       currentValue = data.value;
@@ -265,21 +244,18 @@ if (typeof JFCustomWidget !== 'undefined') {
       }
     }
     JFCustomWidget.subscribe('submit', function () {
-      diagnostic('submit event received. Importing: ' + importing + '; products: ' + grouped.length + '.');
-      if (grouped.length) currentValue = buildWidgetValue();
+
+      // Reuse the generated PNG; do not regenerate it during submission.
       var valid = !importing && (!REQUIRE_IMPORT || currentValue !== '');
       if (!valid) {
         setStatus('err', importing
           ? 'Aguarde a conclusão da importação.'
           : 'Importe uma tabela antes de enviar o formulário.');
       }
-      diagnostic('Calling sendSubmit: valid=' + valid + '; characters=' + currentValue.length + '.');
-      try {
-        JFCustomWidget.sendSubmit({ value: currentValue, valid: valid });
-        diagnostic('sendSubmit returned (delivery is not acknowledged).');
-      } catch (error) { diagnostic('sendSubmit failed: ' + error.message); }
+
+      JFCustomWidget.sendSubmit({ value: currentValue, valid: valid });
     });
-    diagnostic('submit handler registered.');
+
     if (importVersion && !importing) sendCurrentTable();
     resizeWidget();
   });
@@ -287,7 +263,6 @@ if (typeof JFCustomWidget !== 'undefined') {
 
 // ── Timers para auto-ocultar mensagens ────────────────────────────────────────
 var statusTimer  = null;
-var sentBoxTimer = null;
 var chipsTimer   = null;
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
@@ -353,7 +328,6 @@ function handleFile(file) {
   chipsEl.classList.remove('on');
   metaBar.classList.add('on');
   if (statusTimer) clearTimeout(statusTimer);
-  if (sentBoxTimer) clearTimeout(sentBoxTimer);
   if (chipsTimer) clearTimeout(chipsTimer);
   sendCurrentTable();
   setStatus('ok', 'Importando ' + file.name + '…');
@@ -463,10 +437,10 @@ function processRows(rows, filename){
   }, 5000);
 
   tblWrap.classList.add('on');
-  sendCurrentTable();
+  if (!sendCurrentTable()) return;
   sentBox.textContent = widgetReady
-    ? '✔ Dados enviados ao campo. Envie o formulário para salvar a resposta.'
-    : 'Tabela pronta. Aguardando conexão com o formulário Jotform.';
+    ? '✔ PNG pronto. Envie o formulário para salvar a imagem.'
+    : 'PNG pronto. Aguardando conexão com o formulário Jotform.';
   sentBox.classList.add('on');
   resizeWidget();
 }
@@ -506,52 +480,115 @@ function makeTD(text, span, cls){
 }
 
 // ── Tabela HTML para o JotForm ────────────────────────────────────────────────
-// Matches the htmltext metadata format used by Jotform's CKEditor widget.
-// Encoding uses UTF-8 so Portuguese accents survive the round trip.
+// Render every imported row directly to canvas. No screenshot library or server.
 function buildWidgetValue() {
-  var bytes = new TextEncoder().encode(buildHTMLTable());
-  var binary = Array.from(bytes, function (byte) {
-    return String.fromCharCode(byte);
-  }).join('');
+  var canvas = renderTablePNG();
+  var dataURL = canvas.toDataURL('image/png');
+  if (!dataURL.startsWith('data:image/png;base64,')) {
+    throw new Error('Não foi possível gerar a imagem PNG.');
+  }
+  // Keep the entire Data URL, including data:image/png;base64,.
+  // Jotform's submission handler saves this PNG and replaces base64 with url.
   return JSON.stringify({
     widget_metadata: {
-      type: 'htmltext',
-      value: btoa(binary)
+      type: 'imagelinks',
+      value: [{ name: 'imported-table.png', base64: dataURL }]
     }
   });
 }
 
-function buildHTMLTable(){
-  var TH  = 'background:#666666;color:#fff;padding:8px 12px;text-align:left;font-weight:bold;border:1px solid #444444;font-size:10pt;';
-  var TFE = 'padding:7px 12px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;color:#000000;vertical-align:middle;font-size:10pt;white-space:nowrap;';
-  var TRF = 'padding:7px 12px;border:1px solid #d1d5db;background:#ffffff;color:#000000;vertical-align:middle;font-size:10pt;';
-  var TC1 = 'padding:7px 12px;border:1px solid #d1d5db;font-family:monospace;font-size:10pt;background:#ffffff;color:#000000;';
-  var TC2 = 'padding:7px 12px;border:1px solid #d1d5db;font-family:monospace;font-size:10pt;background:#f8faff;color:#000000;';
+function renderTablePNG() {
+  var width = 1100;
+  var widths = [190, 410, 500];
+  var padding = 14;
+  var lineHeight = 24;
+  var font = '18px Arial, sans-serif';
+  var canvas = document.createElement('canvas');
+  var ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas não está disponível neste navegador.');
+  ctx.font = font;
 
-  var h = '<table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;">';
-  h += '<thead><tr>';
-  h += '<th style="' + TH + '">FE / Product</th>';
-  h += '<th style="' + TH + '">Referência do Cliente / Customer Reference</th>';
-  h += '<th style="' + TH + '">Composição / Composition</th>';
-  h += '</tr></thead><tbody>';
-
-  var p = 0;
-  grouped.forEach(function(item){
-    var comps = item.comps.length ? item.comps : ['—'];
-    comps.forEach(function(comp, ci){
-      h += '<tr>';
-      if(ci === 0){
-        h += '<td rowspan="' + comps.length + '" style="' + TFE + '">' + esc(item.fe)  + '</td>';
-        h += '<td rowspan="' + comps.length + '" style="' + TRF + '">' + esc(item.ref) + '</td>';
-      }
-      h += '<td style="' + (p % 2 === 0 ? TC1 : TC2) + '">' + esc(comp) + '</td>';
-      h += '</tr>';
-      p++;
+  function wrap(text, maxWidth) {
+    var result = [];
+    String(text == null ? '' : text).split(/\r\n|\r|\n/).forEach(function (paragraph) {
+      var line = '';
+      // Character wrapping also handles long product codes without spaces.
+      Array.from(paragraph).forEach(function (character) {
+        if (line && ctx.measureText(line + character).width > maxWidth) {
+          result.push(line);
+          line = '';
+        }
+        line += character;
+      });
+      result.push(line);
     });
+    return result;
+  }
+  var headings = [
+    'FE / Product',
+    'Referência do Cliente / Customer Reference',
+    'Composição / Composition'
+  ];
+  ctx.font = 'bold ' + font;
+  var headerLines = headings.map(function (text, i) { return wrap(text, widths[i] - 2 * padding); });
+  var headerHeight = Math.max.apply(null, headerLines.map(function (lines) { return lines.length; })) * lineHeight + 2 * padding;
+  ctx.font = font;
+  var blocks = grouped.map(function (item) {
+    var fe = wrap(item.fe, widths[0] - 2 * padding);
+    var ref = wrap(item.ref, widths[1] - 2 * padding);
+    var compositions = (item.comps.length ? item.comps : ['—']).map(function (comp) {
+      var lines = wrap(comp, widths[2] - 2 * padding);
+      return { lines: lines, height: lines.length * lineHeight + 2 * padding };
+    });
+    var compHeight = compositions.reduce(function (sum, comp) { return sum + comp.height; }, 0);
+    var height = Math.max(compHeight, fe.length * lineHeight + 2 * padding, ref.length * lineHeight + 2 * padding);
+    compositions[compositions.length - 1].height += height - compHeight;
+    return { fe: fe, ref: ref, compositions: compositions, height: height };
   });
+  var height = headerHeight + blocks.reduce(function (sum, block) { return sum + block.height; }, 0) + 2;
+  // Bound canvas memory and dimensions; reject oversized tables instead of cropping.
+  var scale = Math.min(2, 16380 / height, Math.sqrt(24000000 / (width * height)));
+  if (scale < 1) {
+    throw new Error('Tabela muito grande para uma única imagem. Importe menos linhas.');
+  }
+  canvas.width = Math.ceil((width + 2) * scale);
+  canvas.height = Math.ceil(height * scale);
+  ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.translate(1, 1);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(-1, -1, width + 2, height);
+  ctx.textBaseline = 'top';
+  ctx.lineWidth = 1;
 
-  h += '</tbody></table>';
-  return h;
+  function cell(x, y, w, h, lines, background, foreground, bold) {
+    ctx.fillStyle = background;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#c8cdd8';
+    ctx.strokeRect(x, y, w, h);
+    ctx.font = (bold ? 'bold ' : '') + font;
+    ctx.fillStyle = foreground;
+    var textY = y + Math.max(padding, (h - lines.length * lineHeight) / 2);
+    lines.forEach(function (line, i) { ctx.fillText(line, x + padding, textY + i * lineHeight); });
+  }
+  var x = 0;
+  headerLines.forEach(function (lines, i) {
+    cell(x, 0, widths[i], headerHeight, lines, '#666666', '#ffffff', true);
+    x += widths[i];
+  });
+  var y = headerHeight;
+  var rowIndex = 0;
+  blocks.forEach(function (block) {
+    cell(0, y, widths[0], block.height, block.fe, '#ffffff', '#000000', true);
+    cell(widths[0], y, widths[1], block.height, block.ref, '#ffffff', '#000000', false);
+    var compY = y;
+    block.compositions.forEach(function (comp) {
+      cell(widths[0] + widths[1], compY, widths[2], comp.height, comp.lines, rowIndex++ % 2 ? '#f8faff' : '#ffffff', '#000000', false);
+      compY += comp.height;
+    });
+    y += block.height;
+  });
+  return canvas;
 }
 
 function esc(v){
@@ -571,7 +608,6 @@ btnReset.addEventListener('click', function(){
   statusEl.className = 'status';
   statusEl.innerHTML = '';
   if(statusTimer)  clearTimeout(statusTimer);
-  if(sentBoxTimer) clearTimeout(sentBoxTimer);
   if(chipsTimer)   clearTimeout(chipsTimer);
   dz.classList.remove('hidden');
   metaBar.classList.remove('on');
