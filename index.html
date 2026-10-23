@@ -165,7 +165,7 @@
     }
     .sent-box.on { display: flex; }
   </style>
-<script src="https://js.jotform.com/JFCustomWidget.js"></script></head>
+<script src="https://js.jotform.com/JotFormCustomWidget.min.js"></script></head>
 <body>
 
 <!-- Input fora da drop zone, totalmente invisível -->
@@ -178,6 +178,10 @@
   <div class="dz-sub">ou clique para selecionar &nbsp;<code>.xlsx</code>&nbsp;<code>.xls</code>&nbsp;<code>.csv</code></div>
 </div>
 
+<details open style="margin-top:12px;padding:10px;border:1px solid #c8cdd8;background:white">
+<summary>Widget diagnostics — test version 2</summary>
+<pre id="diagnostics" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin-top:8px" aria-live="polite"></pre>
+</details>
 <div class="status" id="status" role="status" aria-live="polite"></div>
 
 <div class="meta-bar" id="metaBar">
@@ -207,6 +211,18 @@
 </div>
 
 <script>
+function diagnostic(message) {
+  var output = document.getElementById('diagnostics');
+  output.textContent += new Date().toLocaleTimeString() + ' ' + message + '\n';
+}
+diagnostic('Script running. SDK loaded: ' + (typeof JFCustomWidget !== 'undefined'));
+window.addEventListener('error', function (event) {
+  diagnostic('JavaScript error: ' + event.message);
+});
+setTimeout(function () {
+  if (!widgetReady) diagnostic('No ready event received. Check that this URL is configured as a Jotform custom iframe widget.');
+}, 8000);
+
 // Set false if an empty answer should be accepted.
 var REQUIRE_IMPORT = true;
 var grouped = [];
@@ -217,14 +233,20 @@ var importVersion = 0;
 
 function resizeWidget() {
   if (widgetReady && typeof JFCustomWidget.requestFrameResize === 'function') {
-    JFCustomWidget.requestFrameResize({ height: document.body.scrollHeight + 32 });
+    try {
+      JFCustomWidget.requestFrameResize({ height: document.body.scrollHeight + 32 });
+    } catch (error) { diagnostic('Resize failed: ' + error.message); }
   }
 }
 
 function sendCurrentTable() {
   currentValue = grouped.length ? buildHTMLTable() : '';
   if (widgetReady) {
-    JFCustomWidget.sendData({ value: currentValue });
+    diagnostic('Calling sendData: ' + currentValue.length + ' characters.');
+    try {
+      JFCustomWidget.sendData({ value: currentValue });
+      diagnostic('sendData returned (delivery is not acknowledged).');
+    } catch (error) { diagnostic('sendData failed: ' + error.message); }
   }
   resizeWidget();
 }
@@ -232,6 +254,7 @@ function sendCurrentTable() {
 if (typeof JFCustomWidget !== 'undefined') {
   JFCustomWidget.subscribe('ready', function (data) {
     widgetReady = true;
+    diagnostic('ready event received from Jotform.');
     // Preserve an existing answer when opening an edited submission.
     if (!importVersion && !grouped.length && data && typeof data.value === 'string') {
       currentValue = data.value;
@@ -240,10 +263,8 @@ if (typeof JFCustomWidget !== 'undefined') {
         metaBar.classList.add('on');
       }
     }
-    if (importVersion && !importing) sendCurrentTable();
-    resizeWidget();
-
     JFCustomWidget.subscribe('submit', function () {
+      diagnostic('submit event received. Importing: ' + importing + '; products: ' + grouped.length + '.');
       if (grouped.length) currentValue = buildHTMLTable();
       var valid = !importing && (!REQUIRE_IMPORT || currentValue !== '');
       if (!valid) {
@@ -251,8 +272,15 @@ if (typeof JFCustomWidget !== 'undefined') {
           ? 'Aguarde a conclusão da importação.'
           : 'Importe uma tabela antes de enviar o formulário.');
       }
-      JFCustomWidget.sendSubmit({ value: currentValue, valid: valid });
+      diagnostic('Calling sendSubmit: valid=' + valid + '; characters=' + currentValue.length + '.');
+      try {
+        JFCustomWidget.sendSubmit({ value: currentValue, valid: valid });
+        diagnostic('sendSubmit returned (delivery is not acknowledged).');
+      } catch (error) { diagnostic('sendSubmit failed: ' + error.message); }
     });
+    diagnostic('submit handler registered.');
+    if (importVersion && !importing) sendCurrentTable();
+    resizeWidget();
   });
 }
 
