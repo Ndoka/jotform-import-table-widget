@@ -38,16 +38,24 @@
       font-family: 'Inter', sans-serif;
       background: var(--bg);
       color: var(--text);
-      padding: 16px;
+      padding: 0;
       font-size: 13px;
     }
 
-    /* ── Input de arquivo: totalmente oculto, fora do fluxo visual ── */
+    /* Mede somente o conteúdo, sem depender da altura atual do iframe. */
+    #widgetContent {
+      display: flow-root;
+      width: 100%;
+      min-width: 0;
+      padding: 16px;
+    }
+
+    /* ── Campo de arquivo: totalmente oculto, fora do fluxo visual ── */
     #fileIn {
       display: none;
     }
 
-    /* ── Drop zone: sem input sobreposto ── */
+    /* ── Área de arrastar e soltar: sem campo de arquivo sobreposto ── */
     .drop-zone {
       background: var(--surface);
       border: 2px dashed var(--border-2);
@@ -77,7 +85,7 @@
       font-family: 'JetBrains Mono', monospace; font-size: 11px;
     }
 
-    /* ── Status ── */
+    /* ── Mensagens de estado ── */
     .status {
       display: none; align-items: center; gap: 8px;
       margin-top: 10px; padding: 9px 14px; border-radius: 8px;
@@ -86,7 +94,7 @@
     .status.ok  { display: flex; background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
     .status.err { display: flex; background: var(--red-bg);   color: var(--red);   border: 1px solid var(--red-border); }
 
-    /* ── Meta bar ── */
+    /* ── Barra de informações ── */
     .meta-bar {
       display: none; align-items: center; justify-content: space-between;
       margin-top: 12px; gap: 8px; flex-wrap: wrap;
@@ -120,7 +128,7 @@
       overflow: hidden; box-shadow: var(--shadow);
     }
     .tbl-wrap.on { display: block; }
-    .tbl-scroll  { overflow-x: auto; max-height: 320px; overflow-y: auto; }
+    .tbl-scroll  { overflow-x: auto; }
     .tbl-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
     .tbl-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
@@ -158,11 +166,12 @@
   </style>
 <script src="https://js.jotform.com/JotFormCustomWidget.min.js"></script></head>
 <body>
+<div id="widgetContent">
 
-<!-- Input fora da drop zone, totalmente invisível -->
+<!-- Campo de arquivo fora da área de arrastar e soltar, totalmente invisível -->
 <input type="file" id="fileIn" accept=".xlsx,.xls,.csv">
 
-<!-- Drop zone sem nenhum elemento filho que intercepte eventos -->
+<!-- Área de arrastar e soltar sem elementos filhos que interceptem os eventos -->
 <div class="drop-zone" id="dz" role="button" tabindex="0" aria-label="Selecionar planilha">
   <div class="dz-icon">📊</div>
   <div class="dz-title">Arraste a tabela de produtos aqui</div>
@@ -192,7 +201,7 @@
 </div>
 
 <div class="tbl-wrap" id="savedImageWrap">
-  <div class="tbl-scroll" style="max-height:420px;padding:12px;">
+  <div class="tbl-scroll" style="padding:12px;">
     <img id="savedImage" alt="Tabela de produtos enviada anteriormente"
          style="display:block;width:100%;height:auto;">
   </div>
@@ -202,8 +211,10 @@
   ✔ Dados enviados ao campo do formulário. Envie o formulário para salvar a resposta.
 </div>
 
+</div>
+
 <script>
-// Set false if an empty answer should be accepted.
+// Defina como false para permitir o envio sem uma imagem.
 var REQUIRE_IMPORT = true;
 var grouped = [];
 var currentValue = '';
@@ -215,7 +226,7 @@ var savedImageValue = '';
 var savedImageURL = '';
 
 
-// Resolve saved image paths against the Jotform parent, not GitHub Pages.
+// Completa os caminhos das imagens salvas usando o domínio do formulário Jotform.
 function resolveSavedImage(value) {
   var metadata;
   try { metadata = JSON.parse(value).widget_metadata; } catch (error) { return ''; }
@@ -260,12 +271,24 @@ function restoreSavedImage() {
   if (widgetReady) JFCustomWidget.sendData({ value: currentValue, valid: true });
 }
 
+// Agrupa as solicitações e envia somente alterações reais de altura ao Jotform.
+var resizePending = false;
+var lastWidgetHeight = 0;
 function resizeWidget() {
-  if (widgetReady && typeof JFCustomWidget.requestFrameResize === 'function') {
+  if (!widgetReady || resizePending || typeof JFCustomWidget.requestFrameResize !== 'function') return;
+  resizePending = true;
+  var schedule = window.requestAnimationFrame || function (callback) { return setTimeout(callback, 16); };
+  schedule(function () {
+    resizePending = false;
+    var content = document.getElementById('widgetContent');
+    // A largura é definida pelo formulário. A altura acompanha o conteúdo nessa largura.
+    var height = Math.max(80, Math.ceil(content.getBoundingClientRect().height));
+    if (height === lastWidgetHeight) return;
     try {
-      JFCustomWidget.requestFrameResize({ height: document.body.scrollHeight + 32 });
-    } catch (error) { /* Resizing is optional; keep data handling available. */ }
-  }
+      JFCustomWidget.requestFrameResize({ height: height });
+      lastWidgetHeight = height;
+    } catch (error) { /* Uma falha de redimensionamento não deve impedir o envio dos dados. */ }
+  });
 }
 
 function sendCurrentTable() {
@@ -291,7 +314,7 @@ if (typeof JFCustomWidget !== 'undefined') {
   JFCustomWidget.subscribe('ready', function (data) {
     widgetReady = true;
 
-    // Preserve an existing answer when opening an edited submission.
+    // Preserva a resposta existente ao abrir uma submissão para edição.
     if (!importVersion && !grouped.length && data && typeof data.value === 'string') {
       currentValue = data.value;
       if (currentValue) {
@@ -305,7 +328,7 @@ if (typeof JFCustomWidget !== 'undefined') {
     }
     JFCustomWidget.subscribe('submit', function () {
 
-      // Reuse the generated PNG; do not regenerate it during submission.
+      // Reutiliza o PNG já gerado para evitar gerar a imagem novamente durante o envio.
       var valid = !importing && (!REQUIRE_IMPORT || currentValue !== '');
       if (!valid) {
         setStatus('err', importing
@@ -321,11 +344,11 @@ if (typeof JFCustomWidget !== 'undefined') {
   });
 }
 
-// ── Timers para auto-ocultar mensagens ────────────────────────────────────────
+// ── Temporizadores para ocultar mensagens automaticamente ────────────────────────────────────────
 var statusTimer  = null;
 var chipsTimer   = null;
 
-// ── DOM ───────────────────────────────────────────────────────────────────────
+// ── Referências aos elementos da página ───────────────────────────────────────────────────────────────────────
 var dz         = document.getElementById('dz');
 var fileIn     = document.getElementById('fileIn');
 var statusEl   = document.getElementById('status');
@@ -336,13 +359,13 @@ var tbody      = document.getElementById('tbody');
 var sentBox    = document.getElementById('sentBox');
 var btnReset   = document.getElementById('btnReset');
 
-// ── Clique na drop zone → abre o seletor de arquivo ──────────────────────────
+// ── Clique na área de arrastar e soltar → abre o seletor de arquivo ──────────────────────────
 dz.addEventListener('click', function(){
-  fileIn.value = ''; // reset para permitir reselecionar o mesmo arquivo
+  fileIn.value = ''; // Limpa a seleção para permitir selecionar novamente o mesmo arquivo.
   fileIn.click();
 });
 
-// ── Drag & Drop ───────────────────────────────────────────────────────────────
+// ── Arrastar e soltar ───────────────────────────────────────────────────────────────
 dz.addEventListener('dragenter', function(e){
   e.preventDefault();
   e.stopPropagation();
@@ -371,15 +394,15 @@ dz.addEventListener('drop', function(e){
   if(files && files[0]) handleFile(files[0]);
 });
 
-// ── Seleção via input ─────────────────────────────────────────────────────────
+// ── Seleção pelo campo de arquivo ─────────────────────────────────────────────────────────
 fileIn.addEventListener('change', function(){
   if(fileIn.files && fileIn.files[0]) handleFile(fileIn.files[0]);
 });
 
-// ── Despachante de arquivo ────────────────────────────────────────────────────
+// ── Identificação e leitura do tipo de arquivo ────────────────────────────────────────────────────
 function handleFile(file) {
   var version = ++importVersion;
-  // Keep the spreadsheet's base name, with a PNG extension.
+  // Usa o nome original da planilha, substituindo a extensão por .png.
   var baseName = file.name.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '_').trim();
   imageFilename = (baseName || 'imported-table') + '.png';
   document.getElementById('savedImageWrap').classList.remove('on');
@@ -479,7 +502,7 @@ function processRows(rows, filename){
 
   var total = map.reduce(function(s, r){ return s + r.comps.length; }, 0);
 
-  // Exibe status de carregamento e oculta após 3 segundos
+  // Exibe a mensagem de carregamento e a oculta após 3 segundos
   setStatus('ok', '✓ ' + filename + ' carregado com sucesso.');
   if(statusTimer) clearTimeout(statusTimer);
   statusTimer = setTimeout(function(){
@@ -495,7 +518,7 @@ function processRows(rows, filename){
   metaBar.classList.add('on');
   chipsEl.classList.add('on');
   
-  // Oculta APENAS os chips após 5 segundos, mantém a metaBar (onde está o botão Novo Arquivo)
+  // Oculta apenas os indicadores após 5 segundos e mantém a barra com o botão Novo arquivo
   if(chipsTimer) clearTimeout(chipsTimer);
   chipsTimer = setTimeout(function(){
     chipsEl.classList.remove('on');
@@ -519,7 +542,7 @@ function colIdx(header, candidates){
   return -1;
 }
 
-// ── Preview ───────────────────────────────────────────────────────────────────
+// ── Pré-visualização da tabela ───────────────────────────────────────────────────────────────────
 function renderPreview(){
   tbody.innerHTML = '';
   grouped.forEach(function(item){
@@ -547,16 +570,16 @@ function makeTD(text, span, cls){
   return td;
 }
 
-// ── Tabela HTML para o JotForm ────────────────────────────────────────────────
-// Render every imported row directly to canvas. No screenshot library or server.
+// ── Geração da imagem PNG e dos metadados para o Jotform ────────────────────────────────────────────────
+// Desenha todas as linhas importadas no canvas, sem biblioteca de captura de tela nem servidor próprio.
 function buildWidgetValue() {
   var canvas = renderTablePNG();
   var dataURL = canvas.toDataURL('image/png');
   if (!dataURL.startsWith('data:image/png;base64,')) {
     throw new Error('Não foi possível gerar a imagem PNG.');
   }
-  // Keep the entire Data URL, including data:image/png;base64,.
-  // Jotform's submission handler saves this PNG and replaces base64 with url.
+  // Mantém a URL de dados completa, incluindo o prefixo data:image/png;base64,.
+  // Ao processar a submissão, o Jotform salva o PNG e substitui a propriedade base64 pela propriedade url.
   return JSON.stringify({
     widget_metadata: {
       type: 'imagelinks',
@@ -580,7 +603,7 @@ function renderTablePNG() {
     var result = [];
     String(text == null ? '' : text).split(/\r\n|\r|\n/).forEach(function (paragraph) {
       var line = '';
-      // Character wrapping also handles long product codes without spaces.
+      // Divide o texto por caracteres para acomodar também códigos longos sem espaços.
       Array.from(paragraph).forEach(function (character) {
         if (line && ctx.measureText(line + character).width > maxWidth) {
           result.push(line);
@@ -614,7 +637,7 @@ function renderTablePNG() {
     return { fe: fe, ref: ref, compositions: compositions, height: height };
   });
   var height = headerHeight + blocks.reduce(function (sum, block) { return sum + block.height; }, 0) + 2;
-  // Bound canvas memory and dimensions; reject oversized tables instead of cropping.
+  // Limita as dimensões e a memória do canvas; rejeita tabelas grandes demais para evitar cortes.
   var scale = Math.min(2, 16380 / height, Math.sqrt(24000000 / (width * height)));
   if (scale < 1) {
     throw new Error('Tabela muito grande para uma única imagem. Importe menos linhas.');
@@ -665,10 +688,10 @@ function esc(v){
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ── Reset ─────────────────────────────────────────────────────────────────────
+// ── Limpeza dos dados ou substituição da imagem ─────────────────────────────────────────────────────────────────────
 btnReset.addEventListener('click', function(){
   if (savedImageValue) {
-    // Opening or cancelling the picker keeps the saved image and answer.
+    // Abrir ou cancelar a seleção de arquivo mantém a imagem e a resposta salvas.
     fileIn.value = '';
     fileIn.click();
     return;
@@ -698,7 +721,7 @@ document.getElementById('savedImage').addEventListener('error', function () {
   setStatus('err', 'Não foi possível carregar a imagem. A resposta salva foi preservada; você pode substituí-la por outra planilha.');
 });
 
-// ── Helper status ─────────────────────────────────────────────────────────────
+// ── Função auxiliar para exibir mensagens ─────────────────────────────────────────────────────────────
 function setStatus(type, message){
   statusEl.className = 'status ' + type;
   statusEl.textContent = message;
@@ -711,6 +734,23 @@ dz.addEventListener('keydown', function (event) {
     fileIn.click();
   }
 });
+
+// Ajusta a altura após mudanças de largura, conteúdo, imagens e fontes.
+var contentToObserve = document.getElementById('widgetContent');
+if (typeof ResizeObserver !== 'undefined') {
+  var contentResizeObserver = new ResizeObserver(resizeWidget);
+  contentResizeObserver.observe(contentToObserve);
+} else if (typeof MutationObserver !== 'undefined') {
+  var contentMutationObserver = new MutationObserver(resizeWidget);
+  contentMutationObserver.observe(contentToObserve, {
+    attributes: true, childList: true, characterData: true, subtree: true
+  });
+}
+window.addEventListener('resize', resizeWidget);
+window.addEventListener('load', resizeWidget);
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(resizeWidget);
+}
 </script>
 
 
