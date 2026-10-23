@@ -191,6 +191,13 @@
   </div>
 </div>
 
+<div class="tbl-wrap" id="savedImageWrap">
+  <div class="tbl-scroll" style="max-height:420px;padding:12px;">
+    <img id="savedImage" alt="Tabela de produtos enviada anteriormente"
+         style="display:block;width:100%;height:auto;">
+  </div>
+</div>
+
 <div class="sent-box" id="sentBox">
   ✔ Dados enviados ao campo do formulário. Envie o formulário para salvar a resposta.
 </div>
@@ -203,6 +210,55 @@ var currentValue = '';
 var widgetReady = false;
 var importing = false;
 var importVersion = 0;
+var imageFilename = 'imported-table.png';
+var savedImageValue = '';
+var savedImageURL = '';
+
+
+// Resolve saved image paths against the Jotform parent, not GitHub Pages.
+function resolveSavedImage(value) {
+  var metadata;
+  try { metadata = JSON.parse(value).widget_metadata; } catch (error) { return ''; }
+  if (!metadata || metadata.type !== 'imagelinks' || !Array.isArray(metadata.value)) return '';
+  var image = metadata.value[0];
+  if (!image) return '';
+  var source = image.url || image.base64;
+  if (typeof source !== 'string') return '';
+  if (/^data:image\/(png|jpeg|gif|webp);base64,/i.test(source)) return source;
+  if (source.startsWith('/uploads/') || source.startsWith('/widget-uploads/')) {
+    var origin = typeof JFCustomWidget.getParentOrigin === 'function'
+      ? JFCustomWidget.getParentOrigin() : 'https://www.jotform.com';
+    try { return new URL(source, origin).href; } catch (error) { return ''; }
+  }
+  try {
+    var url = new URL(source);
+    return url.protocol === 'https:' ? url.href : '';
+  } catch (error) { return ''; }
+}
+
+function showSavedImage(value) {
+  var source = resolveSavedImage(value);
+  if (!source) return false;
+  savedImageValue = value;
+  savedImageURL = source;
+  document.getElementById('savedImage').src = source;
+  document.getElementById('savedImageWrap').classList.add('on');
+  dz.classList.add('hidden');
+  tblWrap.classList.remove('on');
+  chipsEl.classList.remove('on');
+  metaBar.classList.add('on');
+  btnReset.textContent = '↻ Substituir imagem';
+  resizeWidget();
+  return true;
+}
+
+function restoreSavedImage() {
+  if (!savedImageValue) return;
+  grouped = [];
+  currentValue = savedImageValue;
+  showSavedImage(currentValue);
+  if (widgetReady) JFCustomWidget.sendData({ value: currentValue, valid: true });
+}
 
 function resizeWidget() {
   if (widgetReady && typeof JFCustomWidget.requestFrameResize === 'function') {
@@ -239,8 +295,12 @@ if (typeof JFCustomWidget !== 'undefined') {
     if (!importVersion && !grouped.length && data && typeof data.value === 'string') {
       currentValue = data.value;
       if (currentValue) {
-        setStatus('ok', 'Uma tabela já está salva. Importe um arquivo para substituí-la.');
-        metaBar.classList.add('on');
+        if (showSavedImage(currentValue)) {
+          setStatus('ok', 'Imagem salva. Para alterá-la, selecione outra planilha.');
+        } else {
+          setStatus('err', 'Não foi possível exibir a imagem salva. A resposta original foi preservada.');
+          metaBar.classList.add('on');
+        }
       }
     }
     JFCustomWidget.subscribe('submit', function () {
@@ -319,6 +379,10 @@ fileIn.addEventListener('change', function(){
 // ── Despachante de arquivo ────────────────────────────────────────────────────
 function handleFile(file) {
   var version = ++importVersion;
+  // Keep the spreadsheet's base name, with a PNG extension.
+  var baseName = file.name.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '_').trim();
+  imageFilename = (baseName || 'imported-table') + '.png';
+  document.getElementById('savedImageWrap').classList.remove('on');
   importing = true;
   grouped = [];
   currentValue = '';
@@ -335,12 +399,13 @@ function handleFile(file) {
   function fail(message) {
     if (version !== importVersion) return;
     importing = false;
+    restoreSavedImage();
     setStatus('err', message);
   }
   function finish(rows) {
     if (version !== importVersion) return;
     importing = false;
-    processRows(rows, file.name);
+    if (processRows(rows, file.name) === false) restoreSavedImage();
   }
 
   var ext = file.name.split('.').pop().toLowerCase();
@@ -386,7 +451,7 @@ function handleFile(file) {
 
 // ── Processamento ─────────────────────────────────────────────────────────────
 function processRows(rows, filename){
-  if(!rows || rows.length < 2){ setStatus('err', '⚠ Arquivo sem dados.'); return; }
+  if(!rows || rows.length < 2){ setStatus('err', '⚠ Arquivo sem dados.'); return false; }
 
   var header = rows[0].map(function(h){ return String(h || '').trim().toLowerCase(); });
   var iFE   = colIdx(header, ['fe','nfe','número fe','product','fe / product']);
@@ -407,7 +472,7 @@ function processRows(rows, filename){
     if(comp && !map[keyIndex.get(key)].comps.includes(comp)) map[keyIndex.get(key)].comps.push(comp);
   });
 
-  if(!map.length){ setStatus('err', '⚠ Nenhum dado encontrado.'); return; }
+  if(!map.length){ setStatus('err', '⚠ Nenhum dado encontrado.'); return false; }
 
   grouped = map;
   renderPreview();
@@ -437,7 +502,10 @@ function processRows(rows, filename){
   }, 5000);
 
   tblWrap.classList.add('on');
-  if (!sendCurrentTable()) return;
+  if (!sendCurrentTable()) return false;
+  savedImageValue = '';
+  savedImageURL = '';
+  btnReset.textContent = '↩ Novo arquivo';
   sentBox.textContent = widgetReady
     ? '✔ PNG pronto. Envie o formulário para salvar a imagem.'
     : 'PNG pronto. Aguardando conexão com o formulário Jotform.';
@@ -492,7 +560,7 @@ function buildWidgetValue() {
   return JSON.stringify({
     widget_metadata: {
       type: 'imagelinks',
-      value: [{ name: 'imported-table.png', base64: dataURL }]
+      value: [{ name: imageFilename, base64: dataURL }]
     }
   });
 }
@@ -599,6 +667,14 @@ function esc(v){
 
 // ── Reset ─────────────────────────────────────────────────────────────────────
 btnReset.addEventListener('click', function(){
+  if (savedImageValue) {
+    // Opening or cancelling the picker keeps the saved image and answer.
+    fileIn.value = '';
+    fileIn.click();
+    return;
+  }
+  document.getElementById('savedImageWrap').classList.remove('on');
+  document.getElementById('savedImage').removeAttribute('src');
   importVersion++;
   importing = false;
   grouped      = [];
@@ -615,6 +691,11 @@ btnReset.addEventListener('click', function(){
   tblWrap.classList.remove('on');
   sentBox.classList.remove('on');
   sendCurrentTable();
+});
+
+document.getElementById('savedImage').addEventListener('load', resizeWidget);
+document.getElementById('savedImage').addEventListener('error', function () {
+  setStatus('err', 'Não foi possível carregar a imagem. A resposta salva foi preservada; você pode substituí-la por outra planilha.');
 });
 
 // ── Helper status ─────────────────────────────────────────────────────────────
